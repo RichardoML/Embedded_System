@@ -1,0 +1,264 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+#include <pthread.h>
+#include <sys/ioctl.h>
+
+#include "../common/common.h"
+
+/*=================================================================*/
+
+#define LED_IOC_MAGIC	'L'
+#define LED_ON	_IO(LED_IOC_MAGIC, 0)
+#define LED_OFF	_IO(LED_IOC_MAGIC, 1)
+
+static int led_fd = -1;
+void led_set(int on)
+{
+	if(led_fd == -1)
+	{
+		led_fd = open("/dev/led", O_RDWR);
+		if(led_fd < 0){
+        	        printf("open /dev/led failed, errno = %d\n", errno);
+			return;
+	        }
+	}
+	on? ioctl(led_fd,LED_ON) : ioctl(led_fd,LED_OFF);
+	return;
+}
+
+/*=================================================================*/
+
+const int button_width = 13;
+const int button_height = 42;
+const int background_width = SCREEN_WIDTH;
+const int background_height = SCREEN_HEIGHT;
+const int progress_shift_x = 351;
+const int progress_shift_y = 286;
+const int progress_width = 368;
+const int progress_height = 8;
+const int tooltips_width = 77;
+const int tooltips_height = 48;
+const int tooltips_text_shift_x = 12;
+const int tooltips_text_shift_y = 36;
+const int tooltips_text_fontsize = 36;
+const int tooltips_text_fontcolor = FB_COLOR(255,255,255);
+const int tooltips_button_margin = 3;
+
+const int LED_frequence_UpperBound = 50;
+const int LED_frequence_LowerBound = 0;
+
+pthread_mutex_t freq_lock = PTHREAD_MUTEX_INITIALIZER;
+int freq = 1;
+
+
+int button_position_x,button_position_y;
+int tooltips_position_x,tooltips_position_y;
+
+fb_image *bg,*tooltips,*progress_content,*button;
+
+void reDrawPicture(int button_center_x) {
+    char text[32];
+    if (button_center_x <= progress_shift_x ){
+        button_center_x = progress_shift_x ;
+    } 
+    if (button_center_x >= progress_shift_x + progress_width) {
+        button_center_x = progress_shift_x + progress_width ;
+    }
+    button_position_x = button_center_x - button_width/2;
+
+    button_position_y = progress_shift_y + progress_height / 2 - button_height / 2;
+
+    tooltips_position_x = button_center_x - tooltips_width /2;
+    tooltips_position_y = button_position_y - tooltips_button_margin - tooltips_height;
+
+
+    bg = fb_read_jpeg_image("/data/local/background.jpg");
+    tooltips = fb_read_png_image("/data/local/tooltips.png");
+    progress_content = fb_read_png_image("/data/local/progress_content.png");
+    button = fb_read_png_image("/data/local/button.png");
+
+    //draw background;
+    fb_draw_image(0,0,bg,0);
+
+    //draw progress content;
+    progress_content->pixel_w = button_center_x - progress_shift_x;
+    fb_draw_image(progress_shift_x,progress_shift_y,progress_content,0);
+
+    //draw slide button;
+    fb_draw_image(button_position_x,button_position_y,button,0);
+
+    //draw tooltips background;
+    fb_draw_image(tooltips_position_x,tooltips_position_y,tooltips,0);
+
+    //draw text;
+    sprintf(text,"%d%%",(button_center_x - progress_shift_x) * 100 / (progress_width));
+    fb_draw_text(tooltips_position_x + tooltips_text_shift_x,tooltips_position_y + tooltips_text_shift_y,
+            text,tooltips_text_fontsize,tooltips_text_fontcolor);
+     
+    fb_update();
+
+}
+
+int hit(int x,int y){
+    return (x >= progress_shift_x - button_width / 2) 
+        && (x <= progress_shift_x + progress_width + button_width/2)
+        && (y <= progress_shift_y + progress_height / 2 + button_height / 2)
+        && (y >= progress_shift_y + progress_height / 2 - button_height / 2);
+
+}
+
+int getPercentage(int button_center_x){
+    if (button_center_x <= progress_shift_x){
+        printf("Percentage = %d\n",0);
+        return 0;
+    }
+    else if (button_center_x >= progress_shift_x + progress_width){
+        printf("Percentage = %d\n",100);
+        return 100;
+    }
+    else {
+        printf("Percentage = %d\n",(button_center_x - progress_shift_x)*100 / progress_width);
+        return (button_center_x - progress_shift_x)*100 / progress_width;
+    }
+    
+}
+
+void * flick(void * ptr) {
+    static int  freq_local = 0;
+    while (1) {
+        if (pthread_mutex_trylock(&freq_lock) == 0){
+            freq_local = freq;
+            pthread_mutex_unlock(&freq_lock);
+	    printf("%d\n",freq_local);
+        }
+        if (freq_local < 0){
+            return NULL;
+        }
+        else if (freq_local >= LED_frequence_UpperBound){
+	    printf("setting LED on\n");
+            led_set(1);
+        }
+        else if (freq_local <= LED_frequence_LowerBound) {
+	    printf("setting LED off\n");
+            led_set(0);
+        }
+        else {
+ 	    printf("setting LED at a period of %d us\n",1000000/ freq_local);
+            led_set(1);
+            usleep(1000000 / freq_local);
+            led_set(0);
+            usleep(1000000 / freq_local);
+        }
+    
+    }
+}
+
+void updateFreq(int percentage){
+    int freq_new ;
+    if (percentage >= 0)
+        freq_new = percentage * (LED_frequence_UpperBound - LED_frequence_LowerBound) / 100 + LED_frequence_LowerBound;
+    else 
+        freq_new = -1;
+    pthread_mutex_lock(&freq_lock);
+    freq = freq_new;
+    pthread_mutex_unlock(&freq_lock);
+    printf("setting Freq = %d\n",freq_new);
+}
+
+
+int main(int argc, char* argv[])
+{
+	fb_init("/dev/graphics/fb0");
+	font_init("/data/local/font.ttc");
+	touch_init("/dev/input/event3");
+
+    pthread_t tid;
+    // pthread_mutexattr_t freq_lock_attr;
+    pthread_create(&tid,NULL,flick,NULL);
+    pthread_detach(tid);
+
+    pthread_mutex_init(&freq_lock,NULL);
+
+    bg = fb_read_jpeg_image("/data/local/background.jpg");
+    tooltips = fb_read_png_image("/data/local/tooltips.png");
+    progress_content = fb_read_png_image("/data/local/progress_content.png");
+    button = fb_read_png_image("/data/local/button.png");
+
+    int type,x,y,finger,i;
+    int last_x [5];
+    int last_y [5];
+    int last_finger = -1;
+
+    int k;
+    for (k = 0;k<5;k++){
+        last_x[k] = last_y[k] = -1;
+    }
+
+    reDrawPicture(progress_shift_x);
+	while(1){
+		type = touch_read(&x,&y,&finger);
+		switch(type){
+			case TOUCH_PRESS:
+				printf("TOUCH_PRESS：x=%d,y=%d,finger=%d\n",type,x,y,finger);
+                if (last_finger != -1){
+                    break;
+                }
+                if (!hit(x,y)){
+                    break;
+                }
+                reDrawPicture(x);
+                updateFreq(getPercentage(x));
+                last_finger = finger;
+                last_x[finger] = x;
+                last_y[finger] = y;
+				break;
+			case TOUCH_MOVE:
+				printf("TOUCH_MOVE：x=%d,y=%d,finger=%d\n",type,x,y,finger);
+                
+                if (last_finger != finger){
+                    break;
+                }
+
+                reDrawPicture(x);
+                updateFreq(getPercentage(x));
+                last_x[finger] = x;
+                last_y[finger] = y;
+                
+                
+				break;
+			case TOUCH_RELEASE:
+				printf("TOUCH_RELEASE：x=%d,y=%d,finger=%d\n",type,x,y,finger);
+                
+                if (last_finger != finger){
+                    break;
+                }
+
+                
+
+                last_x[finger] = -1;
+                last_y[finger] = -1;
+                last_finger = -1;
+                
+				break;
+			default:
+				break;
+		}
+	}
+
+
+    fb_free_image (button);
+    fb_free_image (progress_content);
+    fb_free_image (tooltips);
+    fb_free_image (bg);
+    
+    // set freq to -1, exit flick thread;
+    updateFreq(-1);
+    pthread_join(tid,NULL);
+	return 0 ;
+}

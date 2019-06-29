@@ -1,0 +1,109 @@
+#include <stdio.h>
+#include "../common/common.h"
+
+/*
+int main(int argc, char *argv[])
+{
+	fb_init("/dev/graphics/fb0");
+	fb_draw_rect(0,0,SCREEN_WIDTH,SCREEN_HEIGHT,FB_COLOR(255,255,255));
+	fb_update();
+
+	touch_init("/dev/input/event3");
+	int type,x,y,finger,i;
+	while(1){
+		type = touch_read(&x,&y,&finger);
+		switch(type){
+			case TOUCH_PRESS:
+				printf("TOUCH_PRESS：x=%d,y=%d,finger=%d\n",type,x,y,finger);
+				break;
+			case TOUCH_MOVE:
+				printf("TOUCH_MOVE：x=%d,y=%d,finger=%d\n",type,x,y,finger);
+				break;
+			case TOUCH_RELEASE:
+				printf("TOUCH_RELEASE：x=%d,y=%d,finger=%d\n",type,x,y,finger);
+				break;
+			default:
+				break;
+		}
+	}
+	return 0;
+	
+}
+*/
+
+#define RED		FB_COLOR(255,0,0)
+#define ORANGE	FB_COLOR(255,165,0)
+#define YELLOW	FB_COLOR(255,255,0)
+#define GREEN	FB_COLOR(0,255,0)
+#define CYAN	FB_COLOR(0,127,255)
+#define BLUE	FB_COLOR(0,0,255)
+#define PURPLE	FB_COLOR(139,0,255)
+#define WHITE   FB_COLOR(255,255,255)
+#define BLACK   FB_COLOR(0,0,0)
+int main(int argc, char *argv[])
+{
+	fb_init("/dev/graphics/fb0");
+	fb_draw_rect(0,0,SCREEN_WIDTH,SCREEN_HEIGHT,FB_COLOR(255,255,255));
+	fb_image *img;
+	img = fb_read_jpeg_image("/data/local/test.jpg");
+	fb_draw_image(0,0,img,0);
+	fb_update();
+	fb_free_image(img);
+	fb_draw_rect(0,0,50,50,BLACK);
+	fb_update();
+	touch_init("/dev/input/event3");
+	int type,x,y,finger,i,oldx[5],oldy[5];
+	int color[5] = {RED,GREEN,BLUE,YELLOW,BLACK};
+	//int color[5] = {BLACK, 0x00ff0000, 0x0000ff00, 0x000000ff, 0x00ffff00};
+	while(1){
+		type = touch_read(&x,&y,&finger);
+		switch(type){
+			case TOUCH_PRESS:
+			    if(x<=50 && y<=50){//reset
+			        fb_draw_rect(0,0,SCREEN_WIDTH,SCREEN_HEIGHT,FB_COLOR(255,255,255));
+			        fb_image *img;
+					img = fb_read_jpeg_image("/data/local/test.jpg");
+					fb_draw_image(0,0,img,0);
+					fb_update();
+					fb_free_image(img);
+			        fb_draw_rect(0,0,50,50,BLACK);
+			    }
+			    else{
+			        oldx[finger]=x;
+			        oldy[finger]=y;
+			        fb_draw_rect(x-2,y-2,4,4,color[finger]);//size of line
+			    }
+			    
+			    
+			    fb_update();
+			    //fb_draw_line(x,y,x+100,y+100,color[finger]);
+				printf("TOUCH_PRESS：x=%d,y=%d,finger=%d, color=%d\n", x,y,finger,color[finger]);
+				break;
+			case TOUCH_MOVE:
+			    fb_draw_line(oldx[finger],oldy[finger],x,y,color[finger]);
+			    fb_draw_line(oldx[finger],oldy[finger]+1,x,y+1,color[finger]);
+			    fb_draw_line(oldx[finger],oldy[finger]-1,x,y-1,color[finger]);
+			    fb_draw_line(oldx[finger],oldy[finger]-2,x,y-2,color[finger]);
+			    fb_draw_line(oldx[finger],oldy[finger]+2,x,y+2,color[finger]);
+
+			    fb_draw_line(oldx[finger]+1,oldy[finger],x+1,y,color[finger]);
+			    fb_draw_line(oldx[finger]-1,oldy[finger],x-1,y,color[finger]);
+			    fb_draw_line(oldx[finger]+2,oldy[finger],x+2,y,color[finger]);
+			    fb_draw_line(oldx[finger]-2,oldy[finger],x-2,y,color[finger]);
+			    oldx[finger]=x;
+			    oldy[finger]=y;
+
+			    fb_update();
+			    
+				printf("TOUCH_MOVE：x=%d,y=%d,finger=%d,color=%d\n", x,y,finger,color[finger]);
+				break;
+			case TOUCH_RELEASE:    
+				printf("TOUCH_RELEASE：x=%d,y=%d,finger=%d\n", x,y,finger);
+				break;
+			default:
+				break;
+		}
+	}
+	return 0;
+	
+}
